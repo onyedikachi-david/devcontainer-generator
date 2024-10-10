@@ -1,6 +1,6 @@
 import os
 import logging
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 import instructor
 
 def setup_azure_openai():
@@ -10,6 +10,10 @@ def setup_azure_openai():
         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     )
+
+def setup_openai():
+    api_key = os.environ.get("OPENAI_API_KEY")
+    return OpenAI(api_key=api_key)
 
 def setup_instructor(openai_client):
     logging.info("Setting up Instructor client...")

@@ -6,7 +6,11 @@ from fasthtml.common import *
 from dotenv import load_dotenv
 from supabase_client import supabase
 
-from helpers.openai_helpers import setup_azure_openai, setup_instructor
+from helpers.openai_helpers import setup_azure_openai, setup_openai
+from helpers.anthropic_helpers import setup_anthropic
+from helpers.google_helpers import setup_google
+from helpers.groq_helpers import setup_groq
+from helpers.instructor_helpers import setup_instructor
 from helpers.github_helpers import fetch_repo_context, check_url_exists
 from helpers.devcontainer_helpers import generate_devcontainer_json, validate_devcontainer_json
 from helpers.token_helpers import count_tokens, truncate_to_token_limit
@@ -22,14 +26,23 @@ load_dotenv()
 
 def check_env_vars():
     required_vars = [
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_API_VERSION",
-        "MODEL",
+        "LLM_PROVIDER",
         "GITHUB_TOKEN",
         "SUPABASE_URL",
         "SUPABASE_KEY",
     ]
+    provider_specific_vars = {
+        "azure_openai": ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_MODEL"],
+        "openai": ["OPENAI_API_KEY"],
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "google": ["GOOGLE_API_KEY"],
+        "groq": ["GROQ_API_KEY"],
+    }
+    
+    llm_provider = os.environ.get("LLM_PROVIDER")
+    if llm_provider:
+        required_vars.extend(provider_specific_vars.get(llm_provider, []))
+    
     missing_vars = [var for var in required_vars if not os.environ.get(var)]
     if missing_vars:
         print(f"Missing environment variables: {', '.join(missing_vars)}. Please configure the env vars file properly.")
@@ -148,7 +161,7 @@ async def post(repo_url: str, regenerate: bool = False):
                     devcontainer_url=devcontainer_url,
                     repo_context=repo_context,
                     tokens=count_tokens(repo_context),
-                    model=os.getenv("MODEL"),
+                    model=os.getenv("MODEL"),  # This line now correctly uses the MODEL environment variable
                     embedding=embedding_json,
                     generated=generated,
                     created_at=datetime.utcnow().isoformat()  # Ensure this is a string
@@ -202,9 +215,25 @@ async def get(fname:str, ext:str):
 
 # Initialize clients
 if check_env_vars():
-    openai_client = setup_azure_openai()
-    instructor_client = setup_instructor(openai_client)
-
+    llm_provider = os.environ.get("LLM_PROVIDER")
+    if llm_provider == "azure_openai":
+        openai_client = setup_azure_openai()
+        instructor_client = setup_instructor(openai_client)
+    elif llm_provider == "openai":
+        openai_client = setup_openai()
+        instructor_client = setup_instructor(openai_client)
+    elif llm_provider == "anthropic":
+        anthropic_client, anthropic_model = setup_anthropic()
+        instructor_client = anthropic_client  # Anthropic doesn't need instructor
+    elif llm_provider == "google":
+        google_client = setup_google()
+        instructor_client = google_client  # Google doesn't need instructor
+    elif llm_provider == "groq":
+        groq_client = setup_groq()
+        instructor_client = groq_client  # Groq doesn't need instructor
+    else:
+        raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+    
 if __name__ == "__main__":
     logging.info("Starting FastHTML app...")
     serve()

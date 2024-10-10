@@ -9,7 +9,9 @@ from helpers.jinja_helper import process_template
 from schemas import DevContainerModel
 from supabase_client import supabase
 from models import DevContainer
-
+from anthropic_client import Anthropic
+from openai_client import OpenAI
+from azure_openai_client import AzureOpenAI
 
 import logging
 import tiktoken
@@ -60,7 +62,7 @@ def truncate_context(context, max_tokens=120000):
 
     return final_context
 
-def generate_devcontainer_json(instructor_client, repo_url, repo_context, devcontainer_url=None, max_retries=2, regenerate=False):
+def generate_devcontainer_json(client, repo_url, repo_context, devcontainer_url, regenerate=False):
     existing_devcontainer = None
     if "<<EXISTING_DEVCONTAINER>>" in repo_context:
         logging.info("Existing devcontainer.json found in the repository.")
@@ -86,35 +88,51 @@ def generate_devcontainer_json(instructor_client, repo_url, repo_context, devcon
 
     prompt = process_template("prompts/devcontainer.jinja", template_data)
 
-    for attempt in range(max_retries + 1):
-        try:
-            logging.debug(f"Attempt {attempt + 1} to generate devcontainer.json")
-            response = instructor_client.chat.completions.create(
-                model=os.getenv("MODEL"),
-                response_model=DevContainerModel,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates devcontainer.json files."},
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            devcontainer_json = json.dumps(response.dict(exclude_none=True), indent=2)
+    if isinstance(client, Anthropic):
+        response = client.messages.create(
+            model=os.getenv("ANTHROPIC_MODEL"),
+            max_tokens=1000,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        devcontainer_json = response.content
+    elif isinstance(client, OpenAI) or isinstance(client, AzureOpenAI):
+        response = client.chat.completions.create(
+            model=os.getenv("MODEL"),
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        devcontainer_json = response.choices[0].message.content
+    elif isinstance(client, GenerativeModel):  # Google's GenerativeModel
+        # Placeholder for Google's implementation
+        response = client.generate_content(
+            prompt=prompt,
+            model_name=os.getenv("GOOGLE_MODEL"),
+            max_output_tokens=1000
+        )
+        devcontainer_json = response.text
+    elif isinstance(client, Groq):  # Groq's client
+        # Placeholder for Groq's implementation
+        response = client.generate_content(
+            prompt=prompt,
+            model_name=os.getenv("GROQ_MODEL"),
+            max_output_tokens=1000
+        )
+        devcontainer_json = response.text
+    else:
+        raise ValueError(f"Unsupported client type: {type(client)}")
 
-            if validate_devcontainer_json(devcontainer_json):
-                logging.info("Successfully generated and validated devcontainer.json")
-                if existing_devcontainer and not regenerate:
-                    return existing_devcontainer, devcontainer_url
-                else:
-                    return devcontainer_json, None  # Return None as URL for generated content
-            else:
-                logging.warning(f"Generated JSON failed validation on attempt {attempt + 1}")
-                if attempt == max_retries:
-                    raise ValueError("Failed to generate valid devcontainer.json after maximum retries")
-        except Exception as e:
-            logging.error(f"Error on attempt {attempt + 1}: {str(e)}")
-            if attempt == max_retries:
-                raise
-
-    raise ValueError("Failed to generate valid devcontainer.json after maximum retries")
+    if validate_devcontainer_json(devcontainer_json):
+        logging.info("Successfully generated and validated devcontainer.json")
+        if existing_devcontainer and not regenerate:
+            return existing_devcontainer, devcontainer_url
+        else:
+            return devcontainer_json, None  # Return None as URL for generated content
+    else:
+        logging.warning(f"Generated JSON failed validation")
+        raise ValueError("Generated JSON failed validation")
 
 def validate_devcontainer_json(devcontainer_json):
     logging.info("Validating devcontainer.json...")
